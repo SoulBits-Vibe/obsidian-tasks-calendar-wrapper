@@ -21,6 +21,11 @@ export const TasksPrioritySymbolToLabel = {
 export type TasksPrioritySymbol = keyof (typeof TasksPrioritySymbolToLabel);
 export type PriorityLabel = string;
 
+export type TaskDateWarning = {
+    field: string;
+    value: string;
+};
+
 export const recurrenceSymbol = '🔁';
 export const startDateSymbol = '🛫';
 export const scheduledDateSymbol = '⏳';
@@ -52,6 +57,16 @@ export const enum TaskStatus {
 }
 
 export const TaskStatusCollection: string[] = [TaskStatus.due, TaskStatus.scheduled, TaskStatus.start, TaskStatus.done, TaskStatus.unplanned];
+export const DataviewTaskFieldCollection: string[] = [
+    "due",
+    "scheduled",
+    "start",
+    "created",
+    "complete",
+    "completion",
+    "done",
+    "priority",
+];
 export const TaskStatusMarkerMap = {
     '>': TaskStatus.overdue,
     '<': TaskStatus.scheduled,
@@ -119,6 +134,7 @@ export class TaskRegularExpressions {
     public static readonly dueDateRegex = /[📅📆🗓] *(\d{4}-\d{2}-\d{2})/u;
     public static readonly doneDateRegex = /✅ *(\d{4}-\d{2}-\d{2})/u;
     public static readonly recurrenceRegex = /🔁 ?([a-zA-Z0-9, !]+)/iu;
+    public static readonly markdownCommentRegex = /%%[\s\S]*?%%/g;
 
     // regex from @702573N
     public static readonly hexColorRegex = /([a-fA-F0-9]{6}|[a-fA-F0-9]{3})\/(.*)/;
@@ -178,6 +194,7 @@ export interface TaskDataModel extends STask {
     isTasksTask: boolean,
     statusMarker: string,
     dates: Map<string, moment.Moment>;
+    dateWarnings?: TaskDateWarning[];
 }
 
 

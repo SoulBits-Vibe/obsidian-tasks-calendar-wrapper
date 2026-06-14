@@ -2,17 +2,28 @@ import { App, Modal, Notice, Plugin, PluginSettingTab, Setting } from "obsidian"
 import { TaskRegularExpressions } from "utils/tasks";
 import TasksCalendarWrapper from "./main";
 const sortOptions = {
-    "(t1, t2) => t1.order <= t2.order ? -1 : 1": "status(ascending)",
-    "(t1, t2) => t1.order >= t2.order ? -1 : 1": "status(descending)",
-    "(t1, t2) => t1.visual.trim() <= t2.visual.trim() ? -1 : 1": "text(ascending)",
-    "(t1, t2) => t1.visual.trim() >= t2.visual.trim() ? -1 : 1": "text(descending)",
-    "(t1, t2) => t1.start <= t2.start ? -1 : 1": "start time(ascending)",
-    "(t1, t2) => t1.start >= t2.start ? -1 : 1": "start time(descending)",
-    "(t1, t2) => t1.due <= t2.due ? -1 : 1": "due time(ascending)",
-    "(t1, t2) => t1.due >= t2.due ? -1 : 1": "due time(descending)",
-    "(t1, t2) => t1.tags <= t2.tags ? -1 : 1": "tags(ascending)",
-    "(t1, t2) => t1.tags >= t2.tags ? -1 : 1": "tags(descending)"
+    "(t1, t2) => t1.order <= t2.order ? -1 : 1": "Status order",
+    "(t1, t2) => t1.order >= t2.order ? -1 : 1": "Reverse status order",
+    "(t1, t2) => t1.visual.trim() <= t2.visual.trim() ? -1 : 1": "Task text A to Z",
+    "(t1, t2) => t1.visual.trim() >= t2.visual.trim() ? -1 : 1": "Task text Z to A",
+    "(t1, t2) => t1.start <= t2.start ? -1 : 1": "Start date oldest first",
+    "(t1, t2) => t1.start >= t2.start ? -1 : 1": "Start date newest first",
+    "(t1, t2) => t1.due <= t2.due ? -1 : 1": "Due date oldest first",
+    "(t1, t2) => t1.due >= t2.due ? -1 : 1": "Due date newest first",
+    "(t1, t2) => t1.tags <= t2.tags ? -1 : 1": "Tags A to Z",
+    "(t1, t2) => t1.tags >= t2.tags ? -1 : 1": "Tags Z to A"
 };
+
+const splitCommaList = (value: string) => value
+    .split(',')
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
+
+const normalizeTagText = (tag: string) => {
+    const trimmedTag = tag.trim();
+    return trimmedTag.startsWith("#") ? trimmedTag : `#${trimmedTag}`;
+};
+
 export const defaultUserOptions = {
     /**
 	 * Open the view on startup or not
@@ -126,7 +137,7 @@ export const defaultUserOptions = {
     /**
      * Display which year it is or not.
      */
-    useYearHeader: true as boolean,
+    useYearHeader: false as boolean,
 
     /**
      * USE INFO BEGIN
@@ -155,6 +166,10 @@ export const defaultUserOptions = {
      * Display which section the task is from or not.
      */
     useSection: true as boolean,
+    /**
+     * Group tasks inside each date section by their containing folder.
+     */
+    groupByFolder: false as boolean,
     /**
      * USE INFO END
      */
@@ -194,10 +209,32 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
     private static createFragmentWithHTML = (html: string) =>
         createFragment((documentFragment) => (documentFragment.createDiv().innerHTML = html));
 
-    async onOptionUpdate(updatePart: Partial<UserOption>, refreashSettingPage = false) {
+    private getScrollContainer() {
+        let element: HTMLElement | null = this.containerEl;
+        while (element && element.parentElement) {
+            if (element.scrollHeight > element.clientHeight) return element;
+            element = element.parentElement;
+        }
+        return this.containerEl;
+    }
+
+    private restoreSettingsScroll(scrollTop: number) {
+        window.requestAnimationFrame(() => {
+            this.getScrollContainer().scrollTop = scrollTop;
+        });
+    }
+
+    private markChildSetting(setting: Setting) {
+        setting.settingEl.addClass("tasks-calendar-wrapper-child-setting");
+        return setting;
+    }
+
+    async onOptionUpdate(updatePart: Partial<UserOption>, refreshSettingPage = false) {
+        const scrollTop = this.getScrollContainer().scrollTop;
         await this.plugin.writeOptions(updatePart);
-        if (refreashSettingPage) {
+        if (refreshSettingPage) {
             this.display();
+            this.restoreSettingsScroll(scrollTop);
         }
     }
 
@@ -207,11 +244,11 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
         containerEl.empty();
 
         containerEl.createEl("h1", { text: 'Timeline Settings' });
-        containerEl.createEl("h2", { text: "UI Settings" });
+        containerEl.createEl("h2", { text: "Startup" });
 
         new Setting(containerEl)
-			.setName("Open View On Startup")
-			.setDesc("Open the view on startup or not.")
+			.setName("Open Timeline On Startup")
+			.setDesc("Show the task timeline automatically when Obsidian starts.")
 			.addToggle(async (tg) => {
 				tg.setValue(this.plugin.userOptions.openViewOnStartup);
 				tg.onChange(
@@ -221,31 +258,94 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
 			});
 
         new Setting(containerEl)
-            .setName("Use Builtin Style")
-            .setDesc("Use builtin styles (the marker icons for task status) or not.\n\
-                If disabled, styles defined by the theme you are using will be used.")
+            .setName("Focus Today When Timeline Opens")
+            .setDesc("Start with only today's section showing.")
             .addToggle(async tg => {
-                tg.setValue(this.plugin.userOptions.useBuiltinStyle);
-                tg.onChange(async v => await this.onOptionUpdate({ useBuiltinStyle: v }));
+                tg.setValue(this.plugin.userOptions.defaultTodayFocus);
+                tg.onChange(async v => await this.onOptionUpdate({ defaultTodayFocus: v }));
             })
 
         new Setting(containerEl)
-            .setName("Enable Counters and Filters Panel")
-            .setDesc("Use counters and filters on the quick entry panel or not.")
+            .setName("Start With A Task Filter")
+            .setDesc("Choose which task count is already active when the timeline opens.")
+            .addDropdown(async dd => {
+                dd.addOptions({
+                    "": "No filter",
+                    "todoFilter": "Todo",
+                    "overdueFilter": "Overdue",
+                    "unplannedFilter": "Unplanned",
+                });
+                dd.setValue(this.plugin.userOptions.defaultFilters);
+                dd.onChange(async v => await this.onOptionUpdate({ defaultFilters: v }));
+            })
+
+        containerEl.createEl("h2", { text: "Quick Entry" });
+
+        new Setting(containerEl)
+            .setName("Add Tasks From Timeline")
+            .setDesc("Show a quick-entry box in the timeline.")
+            .addToggle(async tg => {
+                tg.setValue(this.plugin.userOptions.useQuickEntry);
+                tg.onChange(async v => await this.onOptionUpdate({ useQuickEntry: v }, true));
+            })
+
+        new Setting(containerEl)
+            .setName("Place New Task Box")
+            .setDesc("Choose where quick entry appears.")
+            .addDropdown(async d => {
+                d.addOptions({
+                    "today": "Today section",
+                    "top": "Top of timeline",
+                    "bottom": "Bottom of timeline"
+                });
+                d.setValue(this.plugin.userOptions.entryPosition);
+                d.onChange(async v => await this.onOptionUpdate({ entryPosition: v as "today" | "top" | "bottom" }));
+            })
+
+        if (this.plugin.userOptions.useQuickEntry) {
+            this.markChildSetting(new Setting(containerEl))
+                .setName("Save New Tasks To")
+                .setDesc("Missing folders and files are created automatically.")
+                .addText(t => {
+                    t.setValue(this.plugin.userOptions.inbox);
+                    t.onChange(async v => await this.onOptionUpdate({ inbox: v.trim() }));
+                })
+
+            this.markChildSetting(new Setting(containerEl))
+                .setName("Put New Tasks Under Heading")
+                .setDesc("If the heading is missing, the plugin creates it.")
+                .addText(t => {
+                    t.setValue(this.plugin.userOptions.sectionForNewTasks);
+                    t.onChange(async v => await this.onOptionUpdate({ sectionForNewTasks: v }));
+                })
+        }
+
+        containerEl.createEl("h2", { text: "Timeline Layout" });
+
+        new Setting(containerEl)
+            .setName("Show Year Breaks")
+            .setDesc("Separate timeline sections by year.")
+            .addToggle(tg => {
+                tg.setValue(this.plugin.userOptions.useYearHeader);
+                tg.onChange(async v => await this.onOptionUpdate({ useYearHeader: v }));
+            })
+
+        new Setting(containerEl)
+            .setName("Show Task Counts")
+            .setDesc("Show Todo, Overdue, and Unplanned counts above the timeline.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.useCounters);
                 tg.onChange(async v => await this.onOptionUpdate({ useCounters: v }));
             })
+
         new Setting(containerEl)
-            .setName("Behavior of Counters and Filters Panel")
-            .setDesc("Set the default behavior of the counter and filter buttons.\
-                Available choices are: *Filter* to filter other items out,\
-                or *Focus* to make selected items more clear.")
+            .setName("Clicking Task Counts")
+            .setDesc("Choose what happens when a task count is clicked.")
             .addDropdown(async d => {
                 d.addOptions(
                     {
-                        "Filter": "Filter",
-                        "Focus": "Focus"
+                        "Filter": "Show matching tasks only",
+                        "Focus": "Highlight matching tasks"
                     }
                 );
                 d.setValue(this.plugin.userOptions.counterBehavior);
@@ -253,154 +353,68 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
             })
 
         new Setting(containerEl)
-            .setName("Enable Quick Entry Panel")
-            .setDesc("Use quick entry panel or not.")
-            .addToggle(async tg => {
-                tg.setValue(this.plugin.userOptions.useQuickEntry);
-                tg.onChange(async v => await this.onOptionUpdate({ useQuickEntry: v }, true));
-            })
-
-        new Setting(containerEl)
-            .setName("Quick Entry Panel Position")
-            .setDesc("Where you like the entry panel to be,\
-                * Top means on top of the view,\
-                * Bottom means on bottom of the view,\
-                * Today means in today's view.")
-            .addDropdown(async d => {
-                d.addOptions({
-                    "today": "today",
-                    "top": "top",
-                    "bottom": "bottom"
-                });
-                d.setValue(this.plugin.userOptions.entryPosition);
-                d.onChange(async v => await this.onOptionUpdate({ entryPosition: v as "today" | "top" | "bottom" }));
-            })
-
-        if (this.plugin.userOptions.useQuickEntry) {
-            new Setting(containerEl)
-                .setName("Tasks Files")
-                .setDesc("Task Files you would like to specify explicitly for quick entry panel.\
-                    make sure paths are separated by , .")
-                .addTextArea(ta => {
-                    ta.setPlaceholder("comma separated file paths, e.g.: path1,path2");
-                    ta.setValue(this.plugin.userOptions.taskFiles.join(","));
-                    ta.onChange(async v => {
-                        const values = v.split(',');
-                        const valuesTrimed = values.map(p => p.trim());
-                        await this.onOptionUpdate({ taskFiles: valuesTrimed });
-                    })
-                })
-            new Setting(containerEl)
-                .setName("Inbox")
-                .setDesc("Set a file as an 'Inbox' for task items from the quick entry panel.\
-                    This file will be displayed on top of the file list.")
-                .addText(t => {
-                    t.setValue(this.plugin.userOptions.inbox);
-                    t.onChange(async v => await this.onOptionUpdate({ inbox: v.trim() }));
-                })
-
-            new Setting(containerEl)
-                .setName("Section For New Tasks")
-                .setDesc("Specify under which section the new task items should be appended.")
-                .addText(t => {
-                    t.setValue(this.plugin.userOptions.sectionForNewTasks);
-                    t.onChange(async v => await this.onOptionUpdate({ sectionForNewTasks: v }));
-                })
-        }
-
-        new Setting(containerEl)
-            .setName("Daily Note Folder")
-            .setDesc("Specify the folder where the daily notes are saved.")
-            .addText(t => {
-                t.setValue(this.plugin.userOptions.dailyNoteFolder);
-                t.onChange(async v => await this.onOptionUpdate({ dailyNoteFolder: v }));
-            })
-
-        new Setting(containerEl)
-            .setName("Daily Note Format")
-            .setDesc(
-                TasksCalendarSettingTab.createFragmentWithHTML(
-                    "Daily note file format.\
-                    The format sould be of moment format,\
-                    see <a href=https://momentjs.com/docs/#/displaying/format/>docs of moment.js</a>\
-                    for more details."))
-            .addMomentFormat(m => {
-                m.setValue(this.plugin.userOptions.dailyNoteFormat);
-                m.onChange(async v => await this.onOptionUpdate({ dailyNoteFormat: v }));
-            })
-
-        new Setting(containerEl)
-            .setName("Enable Year Header")
-            .setDesc("Display the year on top of tasks of that year or not.")
-            .addToggle(tg => {
-                tg.setValue(this.plugin.userOptions.useYearHeader);
-                tg.onChange(async v => await this.onOptionUpdate({ useYearHeader: v }));
-            })
-
-        new Setting(containerEl)
-            .setName("Hide tasks of specific status.")
-            .setDesc("Provide comma split status markers, e.g.,: x, - \n\
-                Use [ ] if you would like to hide all tasks with marker [ ] or status todo.")
-            .addText(async t => {
-                t.setPlaceholder("Status markers split by comma. e.g.,: x, -.");
-                t.setValue(this.plugin.userOptions.hideStatusTasks.join(','));
-                t.onChange(async v => await this.onOptionUpdate({
-                    hideStatusTasks: v.split(',').map(s => s === "[ ]" ? " " : s.trim())
-                }))
-            });
-
-        new Setting(containerEl)
-            .setName("Forward Tasks From Past")
-            .setDesc("Forward overdue tasks from the past and all unplanned tasks to display them on the today panel or not.")
+            .setName("Move Past Tasks To Today")
+            .setDesc("Also show overdue, past scheduled, past start, and unplanned tasks in today's section.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.forward);
                 tg.onChange(async v => await this.onOptionUpdate({ forward: v }));
             })
 
         new Setting(containerEl)
-            .setName("Today Focus On Load")
-            .setDesc("Activate today focus on load or not.")
+            .setName("Group Tasks By Folder")
+            .setDesc("Show folder headings inside each date section.")
             .addToggle(async tg => {
-                tg.setValue(this.plugin.userOptions.defaultTodayFocus);
-                tg.onChange(async v => await this.onOptionUpdate({ defaultTodayFocus: v }));
-            })
-        new Setting(containerEl)
-            .setName("Activate Filter On Load")
-            .setDesc("Activate a filter or not")
-            .addDropdown(async dd => {
-                dd.addOptions({
-                    "": "No filters",
-                    "todoFilter": "todo",
-                    "overdueFilter": "overdue",
-                    "unplannedFilter": "unplanned",
-                });
-                dd.setValue(this.plugin.userOptions.defaultFilters);
-                dd.onChange(async v => await this.onOptionUpdate({ defaultFilters: v }));
+                tg.setValue(this.plugin.userOptions.groupByFolder);
+                tg.onChange(async v => await this.onOptionUpdate({ groupByFolder: v }));
             })
 
 
-        containerEl.createEl("h2", { text: "Task Item Visualization Settings" });
+        containerEl.createEl("h2", { text: "Task Cards" });
 
         new Setting(containerEl)
-            .setName("Use Relative Date")
-            .setDesc("Use relative date to describe the task dates or not.")
+            .setName("Show Dates As Words")
+            .setDesc("Show labels like Today, Tomorrow, or in 3 days.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.useRelative);
                 tg.onChange(async v => await this.onOptionUpdate({ useRelative: v }));
             })
         new Setting(containerEl)
-            .setName("Use Recurrence")
-            .setDesc("Display the recurrence information of tasks or not.")
+            .setName("Show Repeating Task Details")
+            .setDesc("Show recurrence information on task cards.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.useRecurrence);
                 tg.onChange(async v => await this.onOptionUpdate({ useRecurrence: v }));
             })
         new Setting(containerEl)
-            .setName("Use Priority")
-            .setDesc("Display the priority information of tasks or not.")
+            .setName("Show Priority Labels")
+            .setDesc("Show priority badges on task cards.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.usePriority);
                 tg.onChange(async v => await this.onOptionUpdate({ usePriority: v }));
+            })
+
+        new Setting(containerEl)
+            .setName("Show Task Status As")
+            .setDesc("Choose how task status controls appear in the timeline.")
+            .addDropdown(async d => {
+                d.addOptions({
+                    "checkbox": "Checkboxes",
+                    "icons": "Status icons"
+                });
+                d.setValue(this.plugin.userOptions.useBuiltinStyle ? "icons" : "checkbox");
+                d.onChange(async v => await this.onOptionUpdate({ useBuiltinStyle: v === "icons" }));
+            })
+
+        new Setting(containerEl)
+            .setName("Displayed Date Format")
+            .setDesc(TasksCalendarSettingTab.createFragmentWithHTML(
+                "Format for visible date labels. Uses Moment.js syntax.\
+                See <a href=https://momentjs.com/docs/#/displaying/format/>Moment format docs</a>."
+            ))
+            .addMomentFormat(async m => {
+                m.setPlaceholder("e.g.: YYYY-MM-DD");
+                m.setValue(this.plugin.userOptions.dateFormat);
+                m.onChange(async v => await this.onOptionUpdate({ dateFormat: v }));
             })
 
         const tagSettings = new Setting(containerEl);
@@ -414,16 +428,6 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
                 tagBadgeSetting.controlEl.appendChild(createEl('div', { cls: "tag", text: `${tag}`, attr: { style: `color: ${color}` } }));
                 tagBadgeSetting
                     .addExtraButton(async btn => {
-                        btn.setIcon("cross")
-                            .setTooltip("Delete")
-                            .onClick(async () => {
-                                delete this.plugin.userOptions.tagColorPalette[tag]
-
-                                await this.onOptionUpdate({}, true);
-                            })
-
-                    })
-                    .addExtraButton(async btn => {
                         btn.setIcon("pencil")
                             .setTooltip("Edit")
                             .onClick(async () => {
@@ -431,11 +435,21 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
                                 modal.onClose = async () => {
                                     if (!modal.valid) return;
                                     delete this.plugin.userOptions.tagColorPalette[tag];
-                                    this.plugin.userOptions.tagColorPalette[modal.tagText] = modal.color;
+                                    this.plugin.userOptions.tagColorPalette[normalizeTagText(modal.tagText)] = modal.color;
 
                                     await this.onOptionUpdate({}, true);
                                 }
                                 modal.open();
+                            })
+
+                    })
+                    .addExtraButton(async btn => {
+                        btn.setIcon("cross")
+                            .setTooltip("Delete")
+                            .onClick(async () => {
+                                delete this.plugin.userOptions.tagColorPalette[tag]
+
+                                await this.onOptionUpdate({}, true);
                             })
                     })
             })
@@ -448,7 +462,7 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
                             const modal = new TagColorPaletteModal(this.plugin)
                             modal.onClose = async () => {
                                 if (!modal.valid) return;
-                                this.plugin.userOptions.tagColorPalette[modal.tagText] = modal.color;
+                                this.plugin.userOptions.tagColorPalette[normalizeTagText(modal.tagText)] = modal.color;
 
                                 await this.onOptionUpdate({}, true);
                             }
@@ -458,8 +472,8 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
         }
 
         tagSettings
-            .setName("Use Tags")
-            .setDesc("Display the tags of tasks or not. Color palette can be defined for tags!")
+            .setName("Show Tags On Tasks")
+            .setDesc("Tag colors can be customized here.")
             .addToggle(tg => {
                 tg.setValue(this.plugin.userOptions.useTags);
                 tg.onChange(async v => {
@@ -469,9 +483,7 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
 
 
         this.tagsSettingItem(containerEl, "Hide Tags",
-            "Specify which tags are not necessary to display with a tag badge,\
-            note that all tag texts are remove from the displayed item text by default.\
-            Also note that the tags are just hided, not removed from the item.",
+            "Tags to hide from task cards. Tags remain in your notes and still count for filtering.",
             this.plugin.userOptions.hideTags,
             (t: string) => {
                 return async () => {
@@ -489,38 +501,25 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
             })
 
         new Setting(containerEl)
-            .setName("Use Filename")
-            .setDesc("Display which file the task is from or not.")
+            .setName("Show Where Tasks Come From")
+            .setDesc("Show the source note on task cards.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.useFileBadge);
                 tg.onChange(async v => this.onOptionUpdate({ useFileBadge: v }));
             })
         new Setting(containerEl)
-            .setName("Use Section")
-            .setDesc("Display which section the task is from or not.")
+            .setName("Show Source Headings")
+            .setDesc("Show the heading or section each task comes from.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.useSection);
                 tg.onChange(async v => await this.onOptionUpdate({ useSection: v }));
             })
 
-        containerEl.createEl("h2", { text: "Other Settings" })
+        containerEl.createEl("h2", { text: "Sorting" })
         new Setting(containerEl)
-            .setName("Date Format")
+            .setName("Sort Tasks By")
             .setDesc(TasksCalendarSettingTab.createFragmentWithHTML(
-                "Specify format you would like to use for dates.\
-                Note that the format should be of moment format.\
-                See <a href=https://momentjs.com/docs/#/displaying/format/>docs of moment.js</a> for more details."
-            ))
-            .addMomentFormat(async m => {
-                m.setPlaceholder("e.g.: YYYY-MM-DD");
-                m.setValue(this.plugin.userOptions.dateFormat);
-                m.onChange(async v => await this.onOptionUpdate({ dateFormat: v }));
-            })
-
-        new Setting(containerEl)
-            .setName("Sort By")
-            .setDesc(TasksCalendarSettingTab.createFragmentWithHTML(
-                "Specify how you would like the taks item to be sorted inside a date."))
+                "Choose how tasks are sorted inside each date section."))
             .addDropdown(async ta => {
                 ta.addOptions(sortOptions);
                 ta.setValue(this.plugin.userOptions.sort);
@@ -530,18 +529,29 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
             })
 
         new Setting(containerEl)
-            .setName("Convert Time Prefix")
-            .setDesc("Convert 24 hour time prefix to 12 hour time with am/pm. \n\
-			    For example, 15:30 at the beginning of a task will become 3:30 pm.\n\
-			    This is applied after sorting, enabling a chronological ordering.")
+            .setName("Show 24-Hour Times As 12-Hour Times")
+            .setDesc("Example: 15:30 becomes 3:30 pm.")
             .addToggle(async tg => {
                 tg.setValue(this.plugin.userOptions.convert24HourTimePrefix);
                 tg.onChange(async v => await this.onOptionUpdate({ convert24HourTimePrefix: v }));
             })
 
+        containerEl.createEl("h2", { text: "Filters" })
+
         new Setting(containerEl)
-            .setName("Use Include Tags")
-            .setDesc("Use tags filters to filter tasks without specific tags out or not.")
+            .setName("Hide Tasks With These Statuses")
+            .setDesc("Status markers to hide. Use x for completed, - for cancelled, or [ ] for unchecked tasks.")
+            .addText(async t => {
+                t.setPlaceholder("x, -, [ ]");
+                t.setValue(this.plugin.userOptions.hideStatusTasks.join(','));
+                t.onChange(async v => await this.onOptionUpdate({
+                    hideStatusTasks: splitCommaList(v).map(s => s === "[ ]" ? " " : s)
+                }))
+            });
+
+        new Setting(containerEl)
+            .setName("Limit Timeline To Matching Tags")
+            .setDesc("Turn this on to show only tasks or notes with the tags listed below.")
             .addToggle(tg => {
                 tg
                     .setValue(this.plugin.userOptions.useIncludeTags)
@@ -549,8 +559,8 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
             });
 
         if (this.plugin.userOptions.useIncludeTags) {
-            this.tagsSettingItem(containerEl, "Task Include Filters",
-                "Filter tasks with specific tags, only tasks with one or more of these tags are displayed.",
+            this.tagsSettingItem(containerEl, "Task Tags To Include",
+                "Only show tasks with one or more of these tags.",
                 this.plugin.userOptions.taskIncludeTags,
                 (t: string) => {
                     return async () => {
@@ -565,10 +575,11 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
                         this.plugin.userOptions.taskIncludeTags.push(t);
                         await this.onOptionUpdate({}, true);
                     }
-                });
+                },
+                true);
 
-            this.tagsSettingItem(containerEl, "File Include Tags",
-                "Filter tasks in specific files which contains one or more of these tags to be displayed.",
+            this.tagsSettingItem(containerEl, "Note Tags To Include",
+                "Only show tasks from notes containing one or more of these tags.",
                 this.plugin.userOptions.fileIncludeTags,
                 (t: string) => {
                     return async () => {
@@ -583,13 +594,14 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
                         this.plugin.userOptions.fileIncludeTags.push(t);
                         await this.onOptionUpdate({}, true);
                     }
-                })
+                },
+                true)
         }
 
 
         new Setting(containerEl)
-            .setName("Use Exclude Tags")
-            .setDesc("Use tags filters to filters tasks with specific tags out or not.")
+            .setName("Hide Timeline Items With Matching Tags")
+            .setDesc("Turn this on to hide tasks or notes with the tags listed below.")
             .addToggle(tg => {
                 tg
                     .setValue(this.plugin.userOptions.useExcludeTags)
@@ -597,8 +609,8 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
             });
 
         if (this.plugin.userOptions.useExcludeTags) {
-            this.tagsSettingItem(containerEl, "Task Exclude Filters",
-                "Filter tasks without specific tags, only tasks **without any** if these tags are displayed.",
+            this.tagsSettingItem(containerEl, "Task Tags To Hide",
+                "Hide tasks containing any of these tags.",
                 this.plugin.userOptions.taskExcludeTags,
                 (t: string) => {
                     return async () => {
@@ -613,10 +625,11 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
                         this.plugin.userOptions.taskExcludeTags.push(t);
                         await this.onOptionUpdate({}, true);
                     }
-                });
+                },
+                true);
 
-            this.tagsSettingItem(containerEl, "File Exclude Tags",
-                "Filter tasks in specific files which **does not** contains any of these tags to be displayed.",
+            this.tagsSettingItem(containerEl, "Note Tags To Hide",
+                "Hide tasks from notes containing any of these tags.",
                 this.plugin.userOptions.fileExcludeTags,
                 (t: string) => {
                     return async () => {
@@ -631,44 +644,35 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
                         this.plugin.userOptions.fileExcludeTags.push(t);
                         await this.onOptionUpdate({}, true);
                     }
-                })
+                },
+                true)
         }
 
         new Setting(containerEl)
-            .setName("Exclude Paths")
-            .setDesc(TasksCalendarSettingTab.createFragmentWithHTML(
-                "Exclude tasks match specific paths (folders, files). \n\
-                <p style=color:red;>NOTE that no prefix or trailing '/' needed, unless you want to filter the entire vault out.</p>"
-            ))
+            .setName("Hide These Folders Or Notes")
+            .setDesc("Comma-separated folders or notes to hide. Leading/trailing slashes are okay.")
             .addTextArea(ta => {
-                ta.setPlaceholder("comma separated file paths, e.g.: path1,path2/path3,path4.md");
+                ta.setPlaceholder("Archive, Templates, Projects/Done.md");
                 ta.setValue(this.plugin.userOptions.excludePaths.join(","));
                 ta.onChange(async v => {
-                    const values = v.split(',');
-                    const valuesTrimed = values.map(p => p.trim()).filter(p => p.length > 0);
-                    await this.onOptionUpdate({ excludePaths: valuesTrimed });
+                    await this.onOptionUpdate({ excludePaths: splitCommaList(v) });
                 })
             })
 
         new Setting(containerEl)
-            .setName("Include Paths")
-            .setDesc(TasksCalendarSettingTab.createFragmentWithHTML(
-                "Include tasks match specific paths (folders, files). \n\
-                <p style=color:red;>NOTE that no prefix or trailing '/' needed, unless you want to filter the entire vault out.</p>"
-            ))
+            .setName("Only Show These Folders Or Notes")
+            .setDesc("Comma-separated folders or notes to show. Leave blank to include the whole vault.")
             .addTextArea(ta => {
-                ta.setPlaceholder("comma separated file paths, e.g.: path1,path2/path3,path4.md");
+                ta.setPlaceholder("Projects, Inbox.md");
                 ta.setValue(this.plugin.userOptions.includePaths.join(","));
                 ta.onChange(async v => {
-                    const values = v.split(',');
-                    const valuesTrimed = values.map(p => p.trim()).filter(p => p.length > 0);
-                    await this.onOptionUpdate({ includePaths: valuesTrimed });
+                    await this.onOptionUpdate({ includePaths: splitCommaList(v) });
                 })
             })
 
         new Setting(containerEl)
-            .setName("Filter Empty")
-            .setDesc("Filter empty items out or not. If not, the raw text will be displayed.")
+            .setName("Hide Empty Tasks")
+            .setDesc("Hide empty task items.")
             .addToggle(to => {
                 to.setValue(this.plugin.userOptions.filterEmpty);
                 to.onChange(async v => {
@@ -684,10 +688,12 @@ export class TasksCalendarSettingTab extends PluginSettingTab {
         tags: string[],
         ondelete: (t: string) => (() => Promise<void>),
         onadd: (t: string) => Promise<void>,
+        childSetting = false,
     ) => {
         const tagsSetting = new Setting(container)
             .setName(name)
             .setDesc(desc)
+        if (childSetting) this.markChildSetting(tagsSetting);
         tagsSetting.controlEl.empty();
         tagsSetting.controlEl.appendChild(createDiv());
         let tagsSettingControlEl = new Setting(tagsSetting.controlEl.firstChild as HTMLElement);
@@ -736,7 +742,7 @@ class TagColorPaletteModal extends Modal {
         const settingdiv = contentEl.createDiv();
         new Setting(settingdiv)
             .setName("Tag and color")
-            .setDesc("Enter tag text (# included) in the text input and select color in the color selector.")
+            .setDesc("Choose the tag and the color to use for it.")
             .addText(t => {
                 t.setValue(this.tagText);
                 t.onChange(v => this.tagText = v);
@@ -751,6 +757,7 @@ class TagColorPaletteModal extends Modal {
                 btn.setIcon("checkmark");
                 btn.setTooltip("Save");
                 btn.onClick(() => {
+                    this.tagText = normalizeTagText(this.tagText);
                     if (!this.tagText.match(TaskRegularExpressions.hashTags)) {
                         this.valid = false;
                         return new Notice(`${this.tagText} seems not a valid tag.`, 5000)
@@ -793,7 +800,7 @@ class TagModal extends Modal {
         const settingdiv = contentEl.createDiv();
         new Setting(settingdiv)
             .setName("Tag")
-            .setDesc("Enter tag text (# included) in the text input and select color in the color selector.")
+            .setDesc("Enter the tag to add. Include # at the beginning.")
             .addText(t => {
                 t.setValue(this.tagText);
                 t.onChange(v => {

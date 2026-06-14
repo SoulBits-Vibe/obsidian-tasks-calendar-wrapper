@@ -25,5 +25,9 @@
     "**/*.ts",
     "Obsidian-Tasks-Timeline/src/components/asserts/icons.tsx",
     "src/views.tsx"
+  ],
+  "exclude": [
+    "tests",
+    "vitest.config.ts"
   ]
 }

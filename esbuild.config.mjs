@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
+import { copyFileSync, mkdirSync } from "fs";
 
 const banner =
 `/*
@@ -36,12 +37,20 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: "ExampleVault/.obsidian/plugins/tasks-view/main.js",
+	outfile: "dist/main.js",
 });
+
+function copyPluginAssets() {
+	mkdirSync("dist", { recursive: true });
+	copyFileSync("manifest.json", "dist/manifest.json");
+	copyFileSync("styles.css", "dist/styles.css");
+}
 
 if (prod) {
 	await context.rebuild();
+	copyPluginAssets();
 	process.exit(0);
 } else {
+	copyPluginAssets();
 	await context.watch();
 }

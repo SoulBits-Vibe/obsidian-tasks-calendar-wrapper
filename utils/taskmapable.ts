@@ -3,6 +3,83 @@ import { Link } from "dataview-util/markdown";
 import { moment } from "obsidian";
 import * as TasksUtil from "./tasks";
 
+type DailyNoteSettings = {
+    format: string;
+    folder: string;
+};
+
+function parseTaskDate(value: string): moment.Moment | undefined {
+    const parsedDate = moment(value, TasksUtil.TaskRegularExpressions.dateFormat, true);
+    return parsedDate.isValid() ? parsedDate : undefined;
+}
+
+function addDateWarning(item: TasksUtil.TaskDataModel, field: string, value: string) {
+    item.dateWarnings = item.dateWarnings || [];
+    item.dateWarnings.push({ field, value: value.trim() });
+}
+
+function getDailyNoteSettings(): DailyNoteSettings {
+    try {
+        const app = (window as any).app;
+        const periodicDaily = app.plugins?.getPlugin?.("periodic-notes")?.settings?.daily;
+        if (periodicDaily?.enabled) {
+            return {
+                format: periodicDaily.format || TasksUtil.innerDateFormat,
+                folder: (typeof periodicDaily.folder === "string" ? periodicDaily.folder : "").trim(),
+            };
+        }
+
+        const dailyOptions = app.internalPlugins?.getPluginById?.("daily-notes")?.instance?.options;
+        return {
+            format: dailyOptions?.format || TasksUtil.innerDateFormat,
+            folder: (typeof dailyOptions?.folder === "string" ? dailyOptions.folder : "").trim(),
+        };
+    } catch {
+        return { format: TasksUtil.innerDateFormat, folder: "" };
+    }
+}
+
+function notePathIsInsideFolder(path: string, folder: string) {
+    const normalizedPath = path.replace(/\\/g, "/");
+    const normalizedFolder = folder.replace(/\\/g, "/").replace(/^\/|\/$/g, "");
+    return normalizedFolder === "" || normalizedPath.startsWith(`${normalizedFolder}/`);
+}
+
+function parseDataviewDate(value: string): moment.Moment | undefined {
+    const trimmedValue = value.trim();
+    const strictDate = moment(trimmedValue, TasksUtil.TaskRegularExpressions.dateFormat, true);
+    if (strictDate.isValid()) return strictDate;
+
+    const isoDate = moment(trimmedValue, moment.ISO_8601, true);
+    return isoDate.isValid() ? isoDate : undefined;
+}
+
+function normalizePriority(value: string): TasksUtil.PriorityLabel {
+    const normalizedValue = value.trim().toLowerCase();
+    switch (normalizedValue) {
+        case "highest":
+        case "🔺":
+            return "Highest";
+        case "high":
+        case "⏫":
+            return "High";
+        case "medium":
+        case "🔼":
+            return "Medium";
+        case "low":
+        case "🔽":
+            return "Low";
+        case "lowest":
+        case "⏬":
+            return "Lowest";
+        case "none":
+        case "no":
+            return "No";
+        default:
+            return value.trim();
+    }
+}
+
 export function filterDate(date: moment.Moment) {
     return filterByDateTime(date, "date");
 }
@@ -11,19 +88,38 @@ export function filterYear(date: moment.Moment) {
     return filterByDateTime(date, "year");
 }
 
+export function getPrimaryTimelineDate(item: TasksUtil.TaskDataModel): moment.Moment | undefined {
+    const forwardedDate = item.dates.get(TasksUtil.TaskStatus.overdue) ||
+        item.dates.get(TasksUtil.TaskStatus.unplanned) ||
+        item.dates.get("done-unplanned");
+    if (forwardedDate) return forwardedDate;
+
+    if (item.completed && item.completion) return item.completion;
+    if (item.due) return item.due;
+    if (item.scheduled) return item.scheduled;
+    if (item.start) return item.start;
+    if (item.completion) return item.completion;
+
+    return [...item.dates.values()]
+        .sort((a, b) => a.valueOf() - b.valueOf())[0];
+}
+
+export function isUndatedActiveTask(item: TasksUtil.TaskDataModel) {
+    return !getPrimaryTimelineDate(item) &&
+        item.status !== TasksUtil.TaskStatus.done &&
+        item.status !== TasksUtil.TaskStatus.cancelled;
+}
+
+export function ensureUndatedTaskPlacement(item: TasksUtil.TaskDataModel) {
+    if (getPrimaryTimelineDate(item)) return item;
+    if (item.status === TasksUtil.TaskStatus.done || item.status === TasksUtil.TaskStatus.cancelled) return item;
+    return item;
+}
+
 function filterByDateTime(date: moment.Moment, by: moment.unitOfTime.StartOf) {
     return (item: TasksUtil.TaskDataModel) => {
-        if (item.due && date.isSame(item.due, by)) return true;
-        if (item.scheduled && date.isSame(item.scheduled, by)) return true;
-        if (item.created && date.isSame(item.created, by)) return true;
-        if (item.completion && date.isSame(item.completion, by)) return true;
-        if (item.start && date.isSame(item.start, by)) return true;
-        for (const [, d] of item.dates) {
-            if (date.isSame(d, by)) {
-                return true;
-            }
-        }
-        return false;
+        const primaryDate = getPrimaryTimelineDate(item);
+        return primaryDate ? date.isSame(primaryDate, by) : false;
     }
 }
 
@@ -33,15 +129,8 @@ export function filterDateRange(from: moment.Moment, to: moment.Moment) {
 
 function filterByDateTimeRange(from: moment.Moment, to: moment.Moment, by: moment.unitOfTime.StartOf) {
     return (item: TasksUtil.TaskDataModel) => {
-        if (item.due && item.due.isBetween(from, to, by)) return true;
-        if (item.scheduled && item.scheduled.isBetween(from, to, by)) return true;
-        if (item.created && item.created.isBetween(from, to, by)) return true;
-        if (item.completion && item.completion.isBetween(from, to, by)) return true;
-        if (item.start && item.start.isBetween(from, to, by)) return true;
-        for (const [, d] of item.dates) {
-            if (d.isBetween(from, to, by)) return true;
-        }
-        return false;
+        const primaryDate = getPrimaryTimelineDate(item);
+        return primaryDate ? primaryDate.isBetween(from, to, by) : false;
     }
 }
 
@@ -88,28 +177,32 @@ export async function tasksPluginTaskParser(item: Promise<TasksUtil.TaskDataMode
 
                     const doneDateMatch = description.match(TasksUtil.TaskRegularExpressions.doneDateRegex);
                     if (doneDateMatch !== null) {
-                        doneDate = window.moment(doneDateMatch[1], TasksUtil.TaskRegularExpressions.dateFormat);
+                        doneDate = parseTaskDate(doneDateMatch[1]);
+                        if (!doneDate) addDateWarning(itemValue, "completion", doneDateMatch[1]);
                         description = description.replace(TasksUtil.TaskRegularExpressions.doneDateRegex, '').trim();
                         matched = true;
                     }
 
                     const dueDateMatch = description.match(TasksUtil.TaskRegularExpressions.dueDateRegex);
                     if (dueDateMatch !== null) {
-                        dueDate = window.moment(dueDateMatch[1], TasksUtil.TaskRegularExpressions.dateFormat);
+                        dueDate = parseTaskDate(dueDateMatch[1]);
+                        if (!dueDate) addDateWarning(itemValue, "due", dueDateMatch[1]);
                         description = description.replace(TasksUtil.TaskRegularExpressions.dueDateRegex, '').trim();
                         matched = true;
                     }
 
                     const scheduledDateMatch = description.match(TasksUtil.TaskRegularExpressions.scheduledDateRegex);
                     if (scheduledDateMatch !== null) {
-                        scheduledDate = window.moment(scheduledDateMatch[1], TasksUtil.TaskRegularExpressions.dateFormat);
+                        scheduledDate = parseTaskDate(scheduledDateMatch[1]);
+                        if (!scheduledDate) addDateWarning(itemValue, "scheduled", scheduledDateMatch[1]);
                         description = description.replace(TasksUtil.TaskRegularExpressions.scheduledDateRegex, '').trim();
                         matched = true;
                     }
 
                     const startDateMatch = description.match(TasksUtil.TaskRegularExpressions.startDateRegex);
                     if (startDateMatch !== null) {
-                        startDate = window.moment(startDateMatch[1], TasksUtil.TaskRegularExpressions.dateFormat);
+                        startDate = parseTaskDate(startDateMatch[1]);
+                        if (!startDate) addDateWarning(itemValue, "start", startDateMatch[1]);
                         description = description.replace(TasksUtil.TaskRegularExpressions.startDateRegex, '').trim();
                         matched = true;
                     }
@@ -167,9 +260,10 @@ export async function dataviewTaskParser(item: Promise<TasksUtil.TaskDataModel>)
     return new Promise((resolve, reject) => {
         item
             .then((itemValue) => {
-                let itemText = itemValue.visual || "";
+                let itemText = (itemValue.visual || "").replace(TasksUtil.TaskRegularExpressions.markdownCommentRegex, '').trim();
                 const inlineFields = itemText.match(TasksUtil.TaskRegularExpressions.keyValueRegex);
                 if (!inlineFields) {
+                    itemValue.visual = itemText;
                     resolve(itemValue);
                     return;
                 }
@@ -181,44 +275,67 @@ export async function dataviewTaskParser(item: Promise<TasksUtil.TaskDataModel>)
                     const [text, key, value] = [tkv[0], tkv[1], tkv[2]];
                     itemText = itemText.replace(text, '');
 
-                    if (!TasksUtil.TaskStatusCollection.includes(key)) continue;
-                    const fieldDate = moment(value);
-                    if (!fieldDate.isValid()) {
-                        console.warn("Parse date for item failed, item: ")
-                        console.warn(inlineFields)
+                    const normalizedKey = key.trim().toLowerCase();
+                    if (!TasksUtil.DataviewTaskFieldCollection.includes(normalizedKey)) continue;
+                    if (normalizedKey === "priority") {
+                        itemValue.priority = normalizePriority(value);
                         continue;
                     }
-                    switch (key) {
+
+                    const fieldDate = parseDataviewDate(value);
+                    if (!fieldDate) {
+                        addDateWarning(itemValue, normalizedKey, value);
+                        continue;
+                    }
+                    switch (normalizedKey) {
                         case "due":
                             itemValue.due = fieldDate; break;
                         case "scheduled":
                             itemValue.scheduled = fieldDate; break;
+                        case "start":
+                            itemValue.start = fieldDate; break;
                         case "complete":
                         case "completion":
                         case "done":
                             itemValue.completion = fieldDate; break;
                         case "created":
-                            itemValue.start = fieldDate; break;
+                            itemValue.created = fieldDate; break;
                         default:
-                            itemValue.dates.set(key, fieldDate); break;
+                            itemValue.dates.set(normalizedKey, fieldDate); break;
                     }
                 }
-                itemValue.visual = itemText;
+                itemValue.visual = itemText.trim();
                 resolve(itemValue);
             })
             .catch(() => reject());
     });
 }
 
-export function dailyNoteTaskParser(dailyNoteFormat: string = TasksUtil.innerDateFormat) {
+export function dailyNoteTaskParser() {
     return async (item: Promise<TasksUtil.TaskDataModel>): Promise<TasksUtil.TaskDataModel> => {
         return new Promise((resolve, reject) => {
             item
                 .then((itemValue) => {
+                    const dailyNoteSettings = getDailyNoteSettings();
+                    if (!notePathIsInsideFolder(itemValue.path, dailyNoteSettings.folder)) {
+                        resolve(itemValue);
+                        return;
+                    }
                     const taskFile: string = getFileTitle(itemValue.path);
+                    const dailyNoteFormat = dailyNoteSettings.format.split("/").pop() || TasksUtil.innerDateFormat;
                     const dailyNoteDate = moment(taskFile, dailyNoteFormat, true);
                     itemValue.dailyNote = dailyNoteDate.isValid();
                     if (!itemValue.dailyNote) {
+                        resolve(itemValue);
+                        return;
+                    }
+                    const hasExplicitDate = itemValue.due ||
+                        itemValue.start ||
+                        itemValue.scheduled ||
+                        itemValue.completion ||
+                        itemValue.created ||
+                        itemValue.dates.size > 0;
+                    if (hasExplicitDate) {
                         resolve(itemValue);
                         return;
                     }

@@ -11,6 +11,49 @@ import { defaultUserOptions, UserOption } from "./settings";
 export const CALENDAR_VIEW = "tasks_calendar_view";
 export const TIMELINE_VIEW = "tasks_timeline_view";
 
+function compareValues<T>(a: T | undefined, b: T | undefined, descending = false) {
+    if (a === undefined && b === undefined) return 0;
+    if (a === undefined) return 1;
+    if (b === undefined) return -1;
+    if (a === b) return 0;
+    const result = a < b ? -1 : 1;
+    return descending ? -result : result;
+}
+
+function compareMoments(a: moment.Moment | undefined, b: moment.Moment | undefined, descending = false) {
+    if (!a?.isValid() && !b?.isValid()) return 0;
+    if (!a?.isValid()) return 1;
+    if (!b?.isValid()) return -1;
+    const result = a.valueOf() - b.valueOf();
+    return descending ? -result : result;
+}
+
+function getTaskComparator(sortOption: string | undefined) {
+    switch (sortOption) {
+        case "(t1, t2) => t1.order >= t2.order ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareValues(t1.order, t2.order, true);
+        case "(t1, t2) => t1.visual.trim() <= t2.visual.trim() ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareValues((t1.visual || "").trim(), (t2.visual || "").trim());
+        case "(t1, t2) => t1.visual.trim() >= t2.visual.trim() ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareValues((t1.visual || "").trim(), (t2.visual || "").trim(), true);
+        case "(t1, t2) => t1.start <= t2.start ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareMoments(t1.start, t2.start);
+        case "(t1, t2) => t1.start >= t2.start ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareMoments(t1.start, t2.start, true);
+        case "(t1, t2) => t1.due <= t2.due ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareMoments(t1.due, t2.due);
+        case "(t1, t2) => t1.due >= t2.due ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareMoments(t1.due, t2.due, true);
+        case "(t1, t2) => t1.tags <= t2.tags ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareValues(t1.tags.join(","), t2.tags.join(","));
+        case "(t1, t2) => t1.tags >= t2.tags ? -1 : 1":
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareValues(t1.tags.join(","), t2.tags.join(","), true);
+        case "(t1, t2) => t1.order <= t2.order ? -1 : 1":
+        default:
+            return (t1: TaskDataModel, t2: TaskDataModel) => compareValues(t1.order, t2.order);
+    }
+}
+
 export abstract class BaseTasksView extends ItemView {
     protected root: Root;
     //protected dataAdapter: ObsidianTaskAdapter;
@@ -26,6 +69,8 @@ export class TasksTimelineView extends BaseTasksView {
     });
 
     private isReloading: boolean = false;
+    private pendingReload: boolean = false;
+    private reloadTimer: number | undefined = undefined;
     private userOptionModel = new Model({ ...defaultUserOptions });
     static view: TasksTimelineView | null = null;
     constructor(leaf: WorkspaceLeaf) {
@@ -51,11 +96,16 @@ export class TasksTimelineView extends BaseTasksView {
         this.root.render(
             <ObsidianBridge plugin={this} userOptionModel={this.userOptionModel} taskListModel={this.taskListModel} />
         )
+        this.onReloadTasks();
 
     }
 
     async onClose(): Promise<void> {
         // this.app.metadataCache.off('resolved', this.onReloadTasks);
+        if (this.reloadTimer !== undefined) {
+            window.clearTimeout(this.reloadTimer);
+            this.reloadTimer = undefined;
+        }
     }
 
     onUpdateOptions(opt: UserOption) {
@@ -65,10 +115,22 @@ export class TasksTimelineView extends BaseTasksView {
     }
 
     async onReloadTasks() {
+        if (this.reloadTimer !== undefined) {
+            window.clearTimeout(this.reloadTimer);
+        }
+        this.reloadTimer = window.setTimeout(() => {
+            this.reloadTimer = undefined;
+            this.reloadTasksNow();
+        }, 250);
+    }
+
+    async reloadTasksNow() {
         if (this.isReloading) {
+            this.pendingReload = true;
             return;
         }
         this.isReloading = true;
+        this.pendingReload = false;
         const fileExcludeFilter = this.userOptionModel.get("excludePaths") || [];
         const fileIncludeFilter = this.userOptionModel.get("includePaths") || [];
         const fileIncludeTagsFilter = this.userOptionModel.get("fileIncludeTags") || [];
@@ -80,17 +142,23 @@ export class TasksTimelineView extends BaseTasksView {
                 const taskListPromise = this.parseTasks(taskList)
                 taskListPromise.then(tasks => {
                     tasks = this.filterTasks(tasks);
-                    const taskfiles = this.userOptionModel.get("taskFiles");
-                    /*tasks.forEach(t => {
-                        if (taskfiles?.contains(t.path)) return;
-                        taskfiles?.push(t.path);
-                    })*/
+                    tasks = tasks.sort(getTaskComparator(this.userOptionModel.get("sort")));
                     this.taskListModel.set({ taskList: tasks });
-                    this.userOptionModel.set({ taskFiles: taskfiles || [] });
-                }).catch(reason => { new Notice("Error when parsing task items: " + reason, 5000); throw reason; });
+                }).catch(reason => {
+                    console.error("Error when parsing task items: ", reason);
+                    new Notice("Error when parsing task items: " + reason, 5000);
+                });
             })
-            .catch(reason => { new Notice("Error when generating tasks from files: " + reason, 5000); throw reason; })
-            .finally(() => this.isReloading = false);
+            .catch(reason => {
+                console.error("Error when generating tasks from files: ", reason);
+                new Notice("Error when generating tasks from files: " + reason, 5000);
+            })
+            .finally(() => {
+                this.isReloading = false;
+                if (this.pendingReload) {
+                    this.onReloadTasks();
+                }
+            });
     }
 
     filterTasks(taskList: TaskDataModel[]) {
@@ -138,8 +206,7 @@ export class TasksTimelineView extends BaseTasksView {
 
         const stautsOrder = this.userOptionModel.get("taskStatusOrder");
 
-        const dailyNoteFormatParser = TaskMapable.dailyNoteTaskParser(
-            this.userOptionModel.get("dailyNoteFormat"));
+        const dailyNoteFormatParser = TaskMapable.dailyNoteTaskParser();
 
         const forward = this.userOptionModel.get("forward");
         /**
@@ -152,11 +219,15 @@ export class TasksTimelineView extends BaseTasksView {
             .map(TaskMapable.tagsParser)
             .map(TaskMapable.remainderParser)
             .map(TaskMapable.postProcessor)
+            .map(async (task: Promise<TaskDataModel>): Promise<TaskDataModel> => {
+                const t = await task;
+                return TaskMapable.ensureUndatedTaskPlacement(t);
+            })
             //.map(TaskMapable.taskLinkParser)
 
             /**
              * Option Forward
-             * Current behavior: show unplanned and overdue tasks in today's part.
+             * Current behavior: show unplanned, overdue, and past-dated active tasks in today's part.
              */
             .map(async (task: Promise<TaskDataModel>): Promise<TaskDataModel> => {
                 return new Promise((resolve) => {
@@ -165,10 +236,12 @@ export class TasksTimelineView extends BaseTasksView {
                             resolve(t);
                             return;
                         }
-                        if (t.status === TaskStatus.unplanned) t.dates.set(TaskStatus.unplanned, moment())
-                        else if (t.status === TaskStatus.done && !t.completion &&
+                        if (t.status === TaskStatus.done && !t.completion &&
                             !t.due && !t.start && !t.scheduled && !t.created) t.dates.set("done-unplanned", moment());
-                        else if (t.status === TaskStatus.overdue &&
+                        else if ((t.status === TaskStatus.overdue ||
+                            t.status === TaskStatus.start ||
+                            t.status === TaskStatus.process) &&
+                            TaskMapable.getPrimaryTimelineDate(t)?.isBefore(moment(), "date") &&
                             !TaskMapable.filterDate(moment())(t)) t.dates.set(TaskStatus.overdue, moment())
                         resolve(t);
                     })
