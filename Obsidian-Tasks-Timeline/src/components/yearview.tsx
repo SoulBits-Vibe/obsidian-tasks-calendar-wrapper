@@ -3,10 +3,13 @@ import * as React from 'react';
 import * as TaskMapable from '../../../utils/taskmapable';
 import { innerDateFormat } from '../../../utils/tasks';
 import { TaskListContext } from './context';
-import { DateView } from './dateview';
+import { CollapseRegistry, DateView } from './dateview';
 
 const defaultYearViewProps = {
     year: 2023 as number,
+    bulkCollapsed: false as boolean,
+    bulkCollapseVersion: 0 as number,
+    collapseRegistry: { dates: new Map(), folders: new Map() } as CollapseRegistry,
 };
 type YearViewProps = Readonly<typeof defaultYearViewProps>;
 export class YearView extends React.Component<YearViewProps> {
@@ -32,7 +35,9 @@ export class YearView extends React.Component<YearViewProps> {
                                 const tasksOfThisDate = tasksOfThisYear.filter(TaskMapable.filterDate(moment(d)));
                                 return (
                                     <TaskListContext.Provider value={{ taskList: tasksOfThisDate, entryOnDate: entryOnDate }} key={d}>
-                                        <DateView date={moment(d)} />
+                                        <DateView date={moment(d)} bulkCollapsed={this.props.bulkCollapsed}
+                                            bulkCollapseVersion={this.props.bulkCollapseVersion}
+                                            collapseRegistry={this.props.collapseRegistry} />
                                     </TaskListContext.Provider>
                                 )
                             })}

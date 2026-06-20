@@ -104,6 +104,14 @@ export function getPrimaryTimelineDate(item: TasksUtil.TaskDataModel): moment.Mo
         .sort((a, b) => a.valueOf() - b.valueOf())[0];
 }
 
+export function shouldForwardTaskToToday(item: TasksUtil.TaskDataModel, today = moment()) {
+    return (item.status === TasksUtil.TaskStatus.overdue ||
+        item.status === TasksUtil.TaskStatus.start ||
+        item.status === TasksUtil.TaskStatus.process) &&
+        Boolean(getPrimaryTimelineDate(item)?.isBefore(today, "date")) &&
+        !filterDate(today)(item);
+}
+
 export function isUndatedActiveTask(item: TasksUtil.TaskDataModel) {
     return !getPrimaryTimelineDate(item) &&
         item.status !== TasksUtil.TaskStatus.done &&
@@ -329,20 +337,7 @@ export function dailyNoteTaskParser() {
                         resolve(itemValue);
                         return;
                     }
-                    const hasExplicitDate = itemValue.due ||
-                        itemValue.start ||
-                        itemValue.scheduled ||
-                        itemValue.completion ||
-                        itemValue.created ||
-                        itemValue.dates.size > 0;
-                    if (hasExplicitDate) {
-                        resolve(itemValue);
-                        return;
-                    }
-                    if (!itemValue.start) itemValue.start = dailyNoteDate;
-                    if (!itemValue.scheduled) itemValue.scheduled = dailyNoteDate;
                     if (!itemValue.created) itemValue.created = dailyNoteDate;
-
                     resolve(itemValue);
                 })
                 .catch(() => reject());

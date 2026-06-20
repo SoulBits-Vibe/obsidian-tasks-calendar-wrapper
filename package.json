@@ -7,6 +7,7 @@
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"test": "vitest run",
+		"ui:preview": "vite --config vitest.config.ts --host 127.0.0.1 --port 4173",
 		"version": "node version-bump.mjs && git add manifest.json versions.json",
 		"eslint": "npx eslint */**.ts",
 		"eslint:fix": "npx eslint --fix */**.ts ; exit 0"
@@ -16,6 +17,8 @@
 	"license": "MIT",
 	"devDependencies": {
 		"@svgr/webpack": "^6.5.1",
+		"@testing-library/react": "^16.3.2",
+		"@testing-library/user-event": "^14.6.1",
 		"@types/backbone": "^1.4.15",
 		"@types/luxon": "^3.2.0",
 		"@types/node": "^20.19.43",
@@ -26,12 +29,14 @@
 		"builtin-modules": "3.3.0",
 		"emoji-regex": "^10.2.1",
 		"esbuild": "^0.28.1",
+		"jsdom": "^26.1.0",
 		"luxon": "^3.2.1",
 		"moment": "^2.30.1",
 		"obsidian": "latest",
 		"parsimmon": "^1.18.1",
 		"tslib": "2.4.0",
 		"typescript": "4.7.4",
+		"vite": "^8.0.16",
 		"vitest": "^4.1.8"
 	},
 	"dependencies": {

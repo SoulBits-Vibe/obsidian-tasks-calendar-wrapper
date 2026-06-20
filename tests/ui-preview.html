@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Tasks Calendar Wrapper UI Preview</title>
+	<link rel="stylesheet" href="/styles.css" />
+	<style>
+		:root {
+			--background-primary: #f4f6fa;
+			--background-secondary: #e9edf4;
+			--background-modifier-border: #b8c0d0;
+			--background-modifier-form-field: #f7f9fc;
+			--background-modifier-hover: #dde5f2;
+			--interactive-normal: #e2e7f0;
+			--interactive-accent: #0095a8;
+			--interactive-accent-hsl: 187, 100%, 33%;
+			--text-normal: #273653;
+			--text-muted: #69758c;
+			--color-red: #e14969;
+			--color-orange: #e16b36;
+			--color-green: #329b71;
+			--color-blue: #3979c6;
+			--checkbox-border-color: #8290a8;
+			--checkbox-border-color-hover: #0095a8;
+			--checkbox-marker-color: white;
+			--checkbox-size: 18px;
+			--input-border-width: 1px;
+			--input-height: 30px;
+			--input-shadow: 0 1px 2px rgba(20, 35, 60, .12);
+		}
+		* { box-sizing: border-box; }
+		button { height: var(--input-height); }
+		body { background: #dfe4ec; font-family: system-ui, sans-serif; margin: 0; padding: 24px; }
+		.previewGrid { align-items: start; display: grid; gap: 24px; grid-template-columns: minmax(0, 560px) 360px; }
+		.previewPane { background: var(--background-primary); border: 1px solid #aeb7c7; border-radius: 8px; height: 760px; overflow: auto; padding: 8px; }
+		.previewPane h2 { color: var(--text-muted); font-size: 12px; font-weight: 600; margin: 0 0 8px; text-transform: uppercase; }
+	</style>
+</head>
+<body>
+	<div class="previewGrid">
+		<section class="previewPane"><h2>Normal pane</h2><div id="wide"></div></section>
+		<section class="previewPane"><h2>Narrow pane</h2><div id="narrow"></div></section>
+	</div>
+	<script type="module" src="/tests/ui-preview.tsx"></script>
+</body>
+</html>

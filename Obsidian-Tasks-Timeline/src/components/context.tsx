@@ -21,6 +21,7 @@ export const UserOptionContext = React.createContext({
     controlsOpen: false as boolean,
     searchQuery: "" as string,
     handleSearchChange: (_event: React.FormEvent<HTMLInputElement> | React.KeyboardEvent<HTMLInputElement>) => { },
+    handleBulkCollapse: (_collapsed: boolean) => { },
 });
 
 export const QuickEntryHandlerContext = React.createContext({

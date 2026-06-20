@@ -238,11 +238,7 @@ export class TasksTimelineView extends BaseTasksView {
                         }
                         if (t.status === TaskStatus.done && !t.completion &&
                             !t.due && !t.start && !t.scheduled && !t.created) t.dates.set("done-unplanned", moment());
-                        else if ((t.status === TaskStatus.overdue ||
-                            t.status === TaskStatus.start ||
-                            t.status === TaskStatus.process) &&
-                            TaskMapable.getPrimaryTimelineDate(t)?.isBefore(moment(), "date") &&
-                            !TaskMapable.filterDate(moment())(t)) t.dates.set(TaskStatus.overdue, moment())
+                        else if (TaskMapable.shouldForwardTaskToToday(t)) t.dates.set(TaskStatus.overdue, moment())
                         resolve(t);
                     })
                 })

@@ -7,6 +7,7 @@ import {
 	filterDate,
 	filterYear,
 	getPrimaryTimelineDate,
+	shouldForwardTaskToToday,
 	ensureUndatedTaskPlacement,
 	isUndatedActiveTask,
 	postProcessor,
@@ -233,15 +234,17 @@ describe("dailyNoteTaskParser", () => {
 		});
 	});
 
-	it("infers dates from a daily note only when the task has no explicit dates", async () => {
+	it("uses a daily-note filename only as the task's created date", async () => {
 		const task = await dailyNoteTaskParser()(Promise.resolve(makeTask("Daily item", {
 			path: "DailyNote/2026-06-10.md",
 		})));
 
 		expect(task.dailyNote).toBe(true);
-		expect(task.start?.format("YYYY-MM-DD")).toBe("2026-06-10");
-		expect(task.scheduled?.format("YYYY-MM-DD")).toBe("2026-06-10");
+		expect(task.start).toBeUndefined();
+		expect(task.scheduled).toBeUndefined();
 		expect(task.created?.format("YYYY-MM-DD")).toBe("2026-06-10");
+		expect(getPrimaryTimelineDate(task)).toBeUndefined();
+		expect(isUndatedActiveTask(task)).toBe(true);
 	});
 
 	it("does not add daily-note dates when an explicit task date exists", async () => {
@@ -255,7 +258,7 @@ describe("dailyNoteTaskParser", () => {
 		expect(task.due?.format("YYYY-MM-DD")).toBe("2026-06-22");
 		expect(task.start).toBeUndefined();
 		expect(task.scheduled).toBeUndefined();
-		expect(task.created).toBeUndefined();
+		expect(task.created?.format("YYYY-MM-DD")).toBe("2026-06-10");
 	});
 
 	it("ignores notes outside the configured daily-note folder", async () => {
@@ -267,6 +270,17 @@ describe("dailyNoteTaskParser", () => {
 		expect(task.start).toBeUndefined();
 		expect(task.scheduled).toBeUndefined();
 		expect(task.created).toBeUndefined();
+	});
+});
+
+describe("forwarding explicit task dates", () => {
+	it("still forwards a genuinely explicit past start date", () => {
+		const task = makeTask("Explicit start", {
+			status: TaskStatus.start,
+			start: moment("2026-05-27", "YYYY-MM-DD", true),
+		});
+
+		expect(shouldForwardTaskToToday(task, moment("2026-06-19", "YYYY-MM-DD", true))).toBe(true);
 	});
 });
 

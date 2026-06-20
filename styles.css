@@ -11,6 +11,7 @@ If your plugin does not need CSS, delete this file.
 	cursor: default;
 	user-select: none;
 	margin-bottom: 15%;
+	container-type: inline-size;
 	--taskido-color-warning: var(--color-red);
 	--taskido-color-focus: var(--interactive-accent);
 	--taskido-color-focus-hsl: var(--interactive-accent-hsl);
@@ -24,10 +25,6 @@ If your plugin does not need CSS, delete this file.
 .taskido a {
 	text-decoration: none !important;
 	color: inherit !important;
-}
-
-.taskido span {
-	display: contents;
 }
 
 .taskido .task .internal-link,
@@ -68,12 +65,19 @@ If your plugin does not need CSS, delete this file.
 }
 
 .taskido .todayHeader {
+	background: transparent;
+	border: 0;
+	box-shadow: none;
+	color: var(--text-normal);
+	display: block;
 	font-size: 24px;
+	height: auto;
 	font-weight: bold;
 	text-align: center;
 	margin: 10px 5px;
 	border-radius: 10px;
 	cursor: pointer;
+	width: calc(100% - 10px);
 }
 
 .taskido .details.today .date {
@@ -90,23 +94,49 @@ If your plugin does not need CSS, delete this file.
 }
 
 .taskido .controlsPanel {
+	display: block;
+	margin: 0 5px 8px;
+}
+
+.taskido .controlsMainRow {
 	align-items: stretch;
 	display: flex;
 	flex-wrap: wrap;
 	gap: 10px;
 	justify-content: flex-start;
-	margin: 0 5px 8px;
 }
 
 .taskido .controlGroup {
 	align-items: center;
-	background: var(--background-secondary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 6px;
 	display: flex;
 	flex: 0 0 auto;
-	gap: 4px;
-	padding: 4px;
+	gap: 6px;
+}
+
+.taskido .bulkCollapseControls {
+	display: flex;
+	gap: 10px;
+	justify-content: flex-end;
+	margin: 4px 0 0;
+}
+
+.taskido .bulkCollapseAction {
+	background: transparent;
+	border: 0;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	font-size: 12px;
+	height: auto;
+	padding: 2px 0;
+}
+
+.taskido .bulkCollapseAction:hover,
+.taskido .bulkCollapseAction:focus-visible {
+	background: transparent;
+	box-shadow: none;
+	color: var(--interactive-accent);
+	text-decoration: underline;
 }
 
 .taskido .taskSearch {
@@ -155,6 +185,7 @@ If your plugin does not need CSS, delete this file.
 	background: transparent;
 	border: 1px solid transparent;
 	border-radius: 6px;
+	box-shadow: none;
 	color: var(--text-muted);
 	cursor: pointer;
 	display: inline-flex;
@@ -168,7 +199,8 @@ If your plugin does not need CSS, delete this file.
 .taskido .timelineToggle:hover,
 .taskido .timelineToggle.active {
 	background: var(--background-modifier-hover);
-	border-color: var(--interactive-accent);
+	border-color: transparent;
+	box-shadow: none;
 	color: var(--interactive-accent);
 }
 
@@ -186,6 +218,7 @@ If your plugin does not need CSS, delete this file.
 }
 
 .taskido .counter {
+	appearance: none;
 	display: flex;
 	flex-direction: column;
 	flex-wrap: nowrap;
@@ -202,6 +235,10 @@ If your plugin does not need CSS, delete this file.
 	background: var(--interactive-normal);
 	box-shadow: var(--input-shadow);
 	cursor: pointer;
+	font-family: inherit;
+	height: auto;
+	line-height: normal;
+	min-height: 46px;
 }
 
 .taskido .count {
@@ -236,7 +273,7 @@ If your plugin does not need CSS, delete this file.
 	flex-wrap: nowrap;
 	justify-content: space-between;
 	align-items: center;
-	margin: 10px 0;
+	margin: 10px 0 4px;
 	padding: 0;
 	width: 100%;
 }
@@ -246,14 +283,37 @@ If your plugin does not need CSS, delete this file.
 	color: var(--taskido-color-focus);
 }
 
+.taskido .todayHeader:focus-visible,
+.taskido .counter:focus-visible,
+.taskido .timelineToggle:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
 .taskido .collapseIcon {
 	align-items: center;
 	color: var(--text-muted);
 	display: inline-flex;
 	flex: 0 0 14px;
-	font-size: 11px;
+	height: 14px;
 	justify-content: center;
 	margin-right: 4px;
+}
+
+.taskido .foldChevron {
+	border-bottom: 1.5px solid currentColor;
+	border-right: 1.5px solid currentColor;
+	display: block;
+	height: 6px;
+	width: 6px;
+}
+
+.taskido .foldChevron.collapsed {
+	transform: rotate(-45deg);
+}
+
+.taskido .foldChevron.expanded {
+	transform: rotate(45deg);
 }
 
 .taskido .dateCount {
@@ -462,7 +522,8 @@ If your plugin does not need CSS, delete this file.
 
 .taskido .task .content {
 	display: block;
-	white-space: break-word;
+	overflow-wrap: anywhere;
+	white-space: normal;
 	font-size: 15px;
 	font-weight: normal;
 	color: var(--text-normal);
@@ -470,11 +531,11 @@ If your plugin does not need CSS, delete this file.
 }
 
 .taskido .projectGroup {
-	margin: 12px 0 10px;
+	margin: 4px 0 8px;
 }
 
 .taskido .projectGroup .task {
-	margin-left: 10px;
+	margin-left: 0;
 }
 
 .taskido .projectGroupHeader {
@@ -482,9 +543,10 @@ If your plugin does not need CSS, delete this file.
 	color: var(--text-normal);
 	cursor: pointer;
 	display: flex;
-	font-size: 14px;
-	font-weight: 600;
-	letter-spacing: 0;
+	font-size: 12px;
+	font-weight: 700;
+	justify-content: flex-end;
+	letter-spacing: 0.35px;
 	line-height: 1.2;
 	margin: 0 0 3px;
 	padding-left: 0;
@@ -500,23 +562,14 @@ If your plugin does not need CSS, delete this file.
 	align-items: center;
 	display: inline-flex;
 	flex: 0 1 auto;
-	gap: 0;
+	gap: 4px;
 	min-width: 0;
-}
-
-.taskido .projectGroupFoldIcon {
-	align-items: center;
-	color: var(--text-muted);
-	display: inline-flex;
-	flex: 0 0 10px;
-	font-size: 10px;
-	justify-content: center;
 }
 
 .taskido .projectGroupHeader .icon {
 	align-items: center;
 	display: inline-flex;
-	flex: 0 0 30px;
+	flex: 0 0 auto;
 	justify-content: center;
 }
 
@@ -529,6 +582,7 @@ If your plugin does not need CSS, delete this file.
 .taskido .projectGroupName {
 	overflow: hidden;
 	text-overflow: ellipsis;
+	text-transform: uppercase;
 	white-space: nowrap;
 }
 
@@ -543,13 +597,13 @@ If your plugin does not need CSS, delete this file.
 	flex-wrap: nowrap;
 	align-items: center;
 	width: auto;
-	font-size: 9px;
+	font-size: 11px;
 	font-weight: normal;
 	margin: 1px 5px 1px 0;
 	color: var(--text-muted);
 	padding: 0px;
 	border: none;
-	line-height: 1 !important;
+	line-height: 1.2 !important;
 	padding: 0;
 	border-radius: 3px !important;
 }
@@ -783,6 +837,41 @@ If your plugin does not need CSS, delete this file.
 
 .tasks-calendar-wrapper-child-setting .setting-item-description {
 	font-size: 12px;
+}
+
+@container (max-width: 430px) {
+	.taskido .counters {
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-inline: 5px;
+	}
+
+	.taskido .counter {
+		flex: 1 1 calc(50% - 6px);
+		margin: 0;
+		max-width: none;
+		min-width: 0;
+	}
+
+	.taskido .controlsMainRow {
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.taskido .controlGroup {
+		flex-wrap: wrap;
+	}
+
+	.taskido .taskSearch {
+		box-sizing: border-box;
+		flex: 0 0 auto;
+		width: 100%;
+	}
+
+	.taskido .bulkCollapseControls {
+		justify-content: center;
+	}
+
 }
 
 /* Focus */

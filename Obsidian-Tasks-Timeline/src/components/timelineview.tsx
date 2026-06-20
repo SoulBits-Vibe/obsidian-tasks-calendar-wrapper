@@ -6,7 +6,7 @@ import * as TaskMapable from '../../../utils/taskmapable';
 import { counterModeClass } from '../../../utils/timelineclasses';
 import { innerDateFormat, TaskDataModel, TaskStatus } from '../../../utils/tasks';
 import { TaskListContext, TodayFocusEventHandlersContext, UserOptionContext } from './context';
-import { NoDateView } from './dateview';
+import { createCollapseRegistry, NoDateView } from './dateview';
 import { YearView } from './yearview';
 
 
@@ -19,6 +19,8 @@ const defaultTimelineStates = {
     todayFocus: false as boolean,
     controlsOpen: false as boolean,
     searchQuery: "" as string,
+    bulkCollapsed: false as boolean,
+    bulkCollapseVersion: 0 as number,
 }
 type TimelineProps = Readonly<typeof defaultTimelineProps>;
 type TimelineStates = typeof defaultTimelineStates;
@@ -72,9 +74,29 @@ export function filterTasksBySearch(taskList: TaskDataModel[], searchQuery: stri
     return directMatches.length > 0 ? directMatches : taskList.filter(task => taskMatchesSourceSearch(task, searchQuery));
 }
 
+export function isTodoTask(task: TaskDataModel) {
+    return [TaskStatus.due, TaskStatus.scheduled, TaskStatus.process, TaskStatus.start].includes(task.status as TaskStatus);
+}
+
+export function filterTasksByCounter(taskList: TaskDataModel[], filter: string, counterBehavior: string) {
+    if (counterBehavior !== "Filter") return taskList;
+
+    switch (filter) {
+        case "todoFilter":
+            return taskList.filter(isTodoTask);
+        case "overdueFilter":
+            return taskList.filter(task => task.status === TaskStatus.overdue);
+        case "unplannedFilter":
+            return taskList.filter(task => task.status === TaskStatus.unplanned || TaskMapable.isUndatedActiveTask(task));
+        default:
+            return taskList;
+    }
+}
+
 export class TimelineView extends React.Component<TimelineProps, TimelineStates> {
     //private calendar: Map<string, Set<number>> = new Map();
     private rootRef: React.RefObject<HTMLDivElement>;
+    private collapseRegistry = createCollapseRegistry();
 
     constructor(props: TimelineProps) {
         super(props);
@@ -83,7 +105,7 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
         this.handleTodayFocus = this.handleTodayFocus.bind(this);
         this.handleSearchChange = this.handleSearchChange.bind(this);
         this.handleToggleControls = this.handleToggleControls.bind(this);
-        this.restoreSearchFocus = this.restoreSearchFocus.bind(this);
+        this.handleBulkCollapse = this.handleBulkCollapse.bind(this);
         this.rootRef = React.createRef<HTMLDivElement>();
 
         this.state = {
@@ -91,6 +113,8 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
             todayFocus: this.props.userOptions.defaultFilters ? false : this.props.userOptions.defaultTodayFocus,
             controlsOpen: false,
             searchQuery: "",
+            bulkCollapsed: false,
+            bulkCollapseVersion: 0,
         }
     }
 
@@ -129,11 +153,6 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
         })
     }
 
-    restoreSearchFocus() {
-        const searchInput = this.rootRef.current?.querySelector<HTMLInputElement>(".taskSearch input");
-        searchInput?.focus();
-    }
-
     handleSearchChange(event: React.FormEvent<HTMLInputElement> | React.KeyboardEvent<HTMLInputElement>) {
         const searchQuery = event.currentTarget.value;
         const hasSearch = searchQuery.trim().length > 0;
@@ -141,9 +160,6 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
             searchQuery,
             todayFocus: hasSearch ? false : this.state.todayFocus,
             filter: hasSearch ? "" : this.state.filter,
-        }, () => {
-            window.requestAnimationFrame(this.restoreSearchFocus);
-            window.setTimeout(this.restoreSearchFocus, 50);
         })
     }
 
@@ -155,9 +171,19 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
         })
     }
 
+    handleBulkCollapse(collapsed: boolean) {
+        this.collapseRegistry.dates.clear();
+        this.collapseRegistry.folders.clear();
+        this.setState(state => ({
+            bulkCollapsed: collapsed,
+            bulkCollapseVersion: state.bulkCollapseVersion + 1,
+        }));
+    }
+
     render(): React.ReactNode {
         const involvedDates: Set<string> = new Set();
-        const taskList = filterTasksBySearch(this.props.taskList, this.state.searchQuery);
+        const searchedTaskList = filterTasksBySearch(this.props.taskList, this.state.searchQuery);
+        const taskList = filterTasksByCounter(searchedTaskList, this.state.filter, this.props.userOptions.counterBehavior);
         const noDateTaskList = taskList.filter(TaskMapable.isUndatedActiveTask);
         const datedTaskList = taskList.filter(t => !TaskMapable.isUndatedActiveTask(t));
         datedTaskList.forEach((t: TaskDataModel) => {
@@ -176,12 +202,9 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
         const lastDay = sortedDatas.last();
 
         //const taskOfToday = taskList.filter(TaskMapable.filterDate(moment()));
-        const overdueCount: number = taskList.filter(t => t.status === TaskStatus.overdue).length;
-        const unplannedCount: number = taskList.filter(t => t.status === TaskStatus.unplanned || TaskMapable.isUndatedActiveTask(t)).length;
-        const completedCount: number = taskList.filter(t => t.status === TaskStatus.done).length;
-        const cancelledCount: number = taskList.filter(t => t.status === TaskStatus.cancelled).length;
-        // .due, .scheduled, .process, .start
-        const todoCount: number = taskList.length - unplannedCount - completedCount - cancelledCount - overdueCount;
+        const overdueCount: number = searchedTaskList.filter(t => t.status === TaskStatus.overdue).length;
+        const unplannedCount: number = searchedTaskList.filter(t => t.status === TaskStatus.unplanned || TaskMapable.isUndatedActiveTask(t)).length;
+        const todoCount: number = searchedTaskList.filter(isTodoTask).length;
 
         const styles = new Array<string>;
         if (!this.props.userOptions.useCounters) styles.push("noCounters");
@@ -226,6 +249,7 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
                         controlsOpen: this.state.controlsOpen,
                         searchQuery: this.state.searchQuery,
                         handleSearchChange: this.handleSearchChange,
+                        handleBulkCollapse: this.handleBulkCollapse,
                         counters: [
                             {
                                 onClick: () => { this.handleCounterFilterClick('todoFilter') },
@@ -254,7 +278,7 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
                             }
                         ]
                     }}>
-                        <span>
+                        <div className='timelineYears'>
                             {years.map((y, i) => (
                                 <TaskListContext.Provider value={
                                     {
@@ -263,17 +287,21 @@ export class TimelineView extends React.Component<TimelineProps, TimelineStates>
                                             this.props.userOptions.entryPosition === "bottom" ? lastDay! : moment().format(innerDateFormat),
                                     }
                                 } key={i}>
-                                    <YearView year={y} key={y} />
+                                    <YearView year={y} bulkCollapsed={this.state.bulkCollapsed}
+                                        bulkCollapseVersion={this.state.bulkCollapseVersion}
+                                        collapseRegistry={this.collapseRegistry} key={y} />
                                 </TaskListContext.Provider>
                             ))}
-                        </span>
+                        </div>
                         <TaskListContext.Provider value={
                             {
                                 taskList: noDateTaskList,
                                 entryOnDate: moment().format(innerDateFormat),
                             }
                         }>
-                            <NoDateView />
+                            <NoDateView bulkCollapsed={this.state.bulkCollapsed}
+                                bulkCollapseVersion={this.state.bulkCollapseVersion}
+                                collapseRegistry={this.collapseRegistry} />
                         </TaskListContext.Provider>
                         {taskList.length === 0 && this.state.searchQuery.trim().length > 0 &&
                             <div className='noSearchResults'>No matching tasks</div>}

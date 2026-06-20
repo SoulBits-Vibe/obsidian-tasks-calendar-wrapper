@@ -5,27 +5,60 @@ import * as Icons from './asserts/icons';
 import { QuickEntryHandlerContext, TaskItemEventHandlersContext, TaskListContext, TodayFocusEventHandlersContext, UserOptionContext } from './context';
 import { TaskItemView } from './taskitemview';
 
+export type CollapseRegistry = {
+    dates: Map<string, boolean>,
+    folders: Map<string, boolean>,
+};
+
+export const createCollapseRegistry = (): CollapseRegistry => ({
+    dates: new Map(),
+    folders: new Map(),
+});
+
 const defaultDateProps = {
     date: moment(),
+    bulkCollapsed: false as boolean,
+    bulkCollapseVersion: 0 as number,
+    collapseRegistry: createCollapseRegistry(),
 }
 
 type DateViewProps = Readonly<typeof defaultDateProps>;
 type DateViewState = {
     collapsed: boolean,
+    bulkCollapseVersion: number,
 };
 
 export class DateView extends React.Component<DateViewProps, DateViewState> {
+    getDateKey() {
+        return this.props.date.format("YYYY-MM-DD");
+    }
+
     constructor(props: DateViewProps) {
         super(props);
-        this.state = { collapsed: false };
+        this.state = {
+            collapsed: props.collapseRegistry.dates.get(props.date.format("YYYY-MM-DD")) ?? props.bulkCollapsed,
+            bulkCollapseVersion: props.bulkCollapseVersion,
+        };
         this.toggleCollapsed = this.toggleCollapsed.bind(this);
     }
 
     toggleCollapsed() {
-        this.setState({ collapsed: !this.state.collapsed });
+        const collapsed = !this.isCollapsed();
+        this.props.collapseRegistry.dates.set(this.getDateKey(), collapsed);
+        this.setState({
+            collapsed,
+            bulkCollapseVersion: this.props.bulkCollapseVersion,
+        });
+    }
+
+    isCollapsed() {
+        return this.props.bulkCollapseVersion !== this.state.bulkCollapseVersion
+            ? this.props.bulkCollapsed
+            : this.state.collapsed;
     }
 
     render(): React.ReactNode {
+        const collapsed = this.isCollapsed();
         return (
             <UserOptionContext.Consumer>{({ dateFormat }) => (
                 < TaskListContext.Consumer >{({ taskList, entryOnDate }) => {
@@ -45,13 +78,15 @@ export class DateView extends React.Component<DateViewProps, DateViewState> {
                                     <DateHeader
                                         thisDate={this.props.date.format(dateFormat)}
                                         taskCount={taskList.length}
-                                        collapsed={this.state.collapsed}
+                                        collapsed={collapsed}
                                         onToggle={this.toggleCollapsed} />
-                                    {!this.state.collapsed && <div className={isToday ? "details today" : "details"}
+                                    {!collapsed && <div className={isToday ? "details today" : "details"}
                                         data-year={this.props.date.format("YYYY")}
                                         data-types={[...new Set(taskList.map((t => t.status)))].join(" ")}>
                                         <TaskListContext.Provider value={{ taskList: taskList, entryOnDate: entryOnDate }}>
-                                            <NormalDateContent date={this.props.date} />
+                                            <NormalDateContent date={this.props.date} bulkCollapsed={this.props.bulkCollapsed}
+                                                bulkCollapseVersion={this.props.bulkCollapseVersion}
+                                                collapseRegistry={this.props.collapseRegistry} />
                                         </TaskListContext.Provider>
                                     </div>}
                                 </div>
@@ -69,20 +104,42 @@ export class DateView extends React.Component<DateViewProps, DateViewState> {
 
 type NoDateViewState = {
     collapsed: boolean,
+    bulkCollapseVersion: number,
 };
 
-export class NoDateView extends React.Component<Record<string, never>, NoDateViewState> {
-    constructor(props: Record<string, never>) {
+type NoDateViewProps = {
+    bulkCollapsed: boolean,
+    bulkCollapseVersion: number,
+    collapseRegistry: CollapseRegistry,
+};
+
+export class NoDateView extends React.Component<NoDateViewProps, NoDateViewState> {
+    constructor(props: NoDateViewProps) {
         super(props);
-        this.state = { collapsed: false };
+        this.state = {
+            collapsed: props.collapseRegistry.dates.get("no-date") ?? props.bulkCollapsed,
+            bulkCollapseVersion: props.bulkCollapseVersion,
+        };
         this.toggleCollapsed = this.toggleCollapsed.bind(this);
     }
 
     toggleCollapsed() {
-        this.setState({ collapsed: !this.state.collapsed });
+        const collapsed = !this.isCollapsed();
+        this.props.collapseRegistry.dates.set("no-date", collapsed);
+        this.setState({
+            collapsed,
+            bulkCollapseVersion: this.props.bulkCollapseVersion,
+        });
+    }
+
+    isCollapsed() {
+        return this.props.bulkCollapseVersion !== this.state.bulkCollapseVersion
+            ? this.props.bulkCollapsed
+            : this.state.collapsed;
     }
 
     render(): React.ReactNode {
+        const collapsed = this.isCollapsed();
         return (
             <TaskListContext.Consumer>{({ taskList, entryOnDate }) => (
                 taskList.length > 0 &&
@@ -90,12 +147,14 @@ export class NoDateView extends React.Component<Record<string, never>, NoDateVie
                     <DateHeader
                         thisDate="Unplanned / No Date"
                         taskCount={taskList.length}
-                        collapsed={this.state.collapsed}
+                        collapsed={collapsed}
                         onToggle={this.toggleCollapsed} />
-                    {!this.state.collapsed &&
+                    {!collapsed &&
                         <div className="details noDateDetails" data-types={[...new Set(taskList.map((t => t.status)))].join(" ") + " unplanned"}>
                             <TaskListContext.Provider value={{ taskList: taskList, entryOnDate: entryOnDate }}>
-                                <NormalDateContent date={moment.invalid()} />
+                                <NormalDateContent date={moment.invalid()} bulkCollapsed={this.props.bulkCollapsed}
+                                    bulkCollapseVersion={this.props.bulkCollapseVersion}
+                                    collapseRegistry={this.props.collapseRegistry} />
                             </TaskListContext.Provider>
                         </div>}
                 </div>
@@ -124,10 +183,11 @@ class DateHeader extends React.Component<DateHeaderProps> {
                 onKeyDown={(event) => this.handleKeyDown(event)}
                 aria-expanded={!this.props.collapsed}
                 aria-label={`${this.props.collapsed ? "Expand" : "Collapse"} ${this.props.thisDate}`}>
-                <span className='collapseIcon'>{this.props.collapsed ? ">" : "v"}</span>
+                <span className='collapseIcon' aria-hidden='true'>
+                    <span className={this.props.collapsed ? 'foldChevron collapsed' : 'foldChevron expanded'}></span>
+                </span>
                 <div className='date'>{this.props.thisDate}</div>
                 <div className='dateCount'>{this.props.taskCount}</div>
-                <div className='weekday'></div>
             </div>
         )
     }
@@ -135,78 +195,113 @@ class DateHeader extends React.Component<DateHeaderProps> {
 
 type NormalDateContentProps = {
     date: moment.Moment,
+    bulkCollapsed: boolean,
+    bulkCollapseVersion: number,
+    collapseRegistry: CollapseRegistry,
 }
 
 type NormalDateContentState = {
     collapsedFolders: Record<string, boolean>,
+    defaultFolderCollapsed: boolean,
+    bulkCollapseVersion: number,
 }
 
 class NormalDateContent extends React.Component<NormalDateContentProps, NormalDateContentState> {
+    getFolderStateKey(folderPath: string) {
+        const dateKey = this.props.date.isValid() ? this.props.date.format("YYYY-MM-DD") : "no-date";
+        return `${dateKey}::${this.getFolderKey(folderPath)}`;
+    }
+
     constructor(props: NormalDateContentProps) {
         super(props);
-        this.state = { collapsedFolders: {} };
+        this.state = {
+            collapsedFolders: {},
+            defaultFolderCollapsed: props.bulkCollapsed,
+            bulkCollapseVersion: props.bulkCollapseVersion,
+        };
         this.toggleFolderCollapsed = this.toggleFolderCollapsed.bind(this);
     }
 
-    getFolderName(path: string) {
+    getFolderPath(path: string) {
         const pathParts = path.split('/').filter(part => part.length > 0);
         if (pathParts.length <= 1) return "";
-        return pathParts[pathParts.length - 2];
+        return pathParts.slice(0, -1).join('/');
     }
 
     groupTasksByFolder(taskList: TaskDataModel[]) {
         const groupedTasks = new Map<string, TaskDataModel[]>();
         taskList.forEach(task => {
-            const folderName = this.getFolderName(task.path);
-            const tasks = groupedTasks.get(folderName) || [];
+            const folderPath = this.getFolderPath(task.path);
+            const tasks = groupedTasks.get(folderPath) || [];
             tasks.push(task);
-            groupedTasks.set(folderName, tasks);
+            groupedTasks.set(folderPath, tasks);
         });
         return [...groupedTasks.entries()].sort(([folderA], [folderB]) => folderA.localeCompare(folderB));
     }
 
-    getFolderKey(folderName: string) {
-        return folderName || "vault-root";
+    getFolderKey(folderPath: string) {
+        return folderPath || "vault-root";
     }
 
-    toggleFolderCollapsed(folderName: string) {
-        const folderKey = this.getFolderKey(folderName);
+    getFolderLabel(folderPath: string, allFolderPaths: string[]) {
+        if (!folderPath) return "Vault root";
+        const folderName = folderPath.split('/').last() || folderPath;
+        const duplicateName = allFolderPaths.filter(path => path.split('/').last() === folderName).length > 1;
+        return duplicateName ? folderPath : folderName;
+    }
+
+    toggleFolderCollapsed(folderPath: string) {
+        const folderKey = this.getFolderKey(folderPath);
+        const folderStateKey = this.getFolderStateKey(folderPath);
+        const bulkChanged = this.props.bulkCollapseVersion !== this.state.bulkCollapseVersion;
+        const defaultFolderCollapsed = bulkChanged ? this.props.bulkCollapsed : this.state.defaultFolderCollapsed;
+        const collapsedFolders = bulkChanged ? {} : this.state.collapsedFolders;
+        const isCollapsed = collapsedFolders[folderKey] ?? defaultFolderCollapsed;
+        this.props.collapseRegistry.folders.set(folderStateKey, !isCollapsed);
         this.setState({
             collapsedFolders: {
-                ...this.state.collapsedFolders,
-                [folderKey]: !this.state.collapsedFolders[folderKey],
-            }
+                ...collapsedFolders,
+                [folderKey]: !isCollapsed,
+            },
+            defaultFolderCollapsed,
+            bulkCollapseVersion: this.props.bulkCollapseVersion,
         });
     }
 
-    handleFolderKeyDown(event: React.KeyboardEvent<HTMLDivElement>, folderName: string) {
+    handleFolderKeyDown(event: React.KeyboardEvent<HTMLDivElement>, folderPath: string) {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
-        this.toggleFolderCollapsed(folderName);
+        this.toggleFolderCollapsed(folderPath);
     }
 
     render(): React.ReactNode {
         return (
             <UserOptionContext.Consumer>{({ groupByFolder }) => (
                 <TaskListContext.Consumer>
-                    {({ taskList }) => (
-                        <div className='content'>
+                    {({ taskList }) => {
+                        const groupedTasks = this.groupTasksByFolder(taskList);
+                        const folderPaths = groupedTasks.map(([folderPath]) => folderPath);
+                        return <div className='content'>
                             {!groupByFolder && taskList.map((t) =>
                                 <TaskItemView key={`${t.path}-${t.position.start.offset}-${t.position.end.offset}`} taskItem={t} />)}
-                            {groupByFolder && this.groupTasksByFolder(taskList).map(([folderName, tasks]) => {
-                                const folderKey = this.getFolderKey(folderName);
-                                const isCollapsed = Boolean(this.state.collapsedFolders[folderKey]);
+                            {groupByFolder && groupedTasks.map(([folderPath, tasks]) => {
+                                const folderKey = this.getFolderKey(folderPath);
+                                const folderLabel = this.getFolderLabel(folderPath, folderPaths);
+                                const savedCollapsed = this.props.collapseRegistry.folders.get(this.getFolderStateKey(folderPath));
+                                const bulkChanged = this.props.bulkCollapseVersion !== this.state.bulkCollapseVersion;
+                                const isCollapsed = bulkChanged
+                                    ? this.props.bulkCollapsed
+                                    : this.state.collapsedFolders[folderKey] ?? savedCollapsed ?? this.state.defaultFolderCollapsed;
                                 return (
                                     <div className={isCollapsed ? "projectGroup collapsed" : "projectGroup"} key={folderKey}>
                                         <div className='projectGroupHeader' role='button' tabIndex={0}
                                             aria-expanded={!isCollapsed}
-                                            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${folderName || "Vault root"}`}
-                                            onClick={() => this.toggleFolderCollapsed(folderName)}
-                                            onKeyDown={(event) => this.handleFolderKeyDown(event, folderName)}>
+                                            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${folderLabel}`}
+                                            onClick={() => this.toggleFolderCollapsed(folderPath)}
+                                            onKeyDown={(event) => this.handleFolderKeyDown(event, folderPath)}>
                                             <span className='projectGroupLabel'>
-                                                <span className='projectGroupFoldIcon'>{isCollapsed ? ">" : "v"}</span>
                                                 <span className='icon'>{Icons.folderIcon}</span>
-                                                <span className='projectGroupName'>{folderName || "Vault root"}</span>
+                                                <span className='projectGroupName' title={folderPath || "Vault root"}>{folderLabel}</span>
                                             </span>
                                         </div>
                                         {!isCollapsed && tasks.map((t) =>
@@ -215,7 +310,7 @@ class NormalDateContent extends React.Component<NormalDateContentProps, NormalDa
                                 );
                             })}
                         </div>
-                    )}
+                    }}
                 </TaskListContext.Consumer>
             )}
             </UserOptionContext.Consumer>
@@ -245,26 +340,48 @@ class TimelineControls extends React.Component {
             <UserOptionContext.Consumer>{({ controlsOpen, searchQuery, handleSearchChange }) => (
                 controlsOpen &&
                 <div className='controlsPanel'>
-                    <div className='controlGroup'>
-                        <StatusStyleToggle />
-                        <FolderGroupingToggle />
+                    <div className='controlsMainRow'>
+                        <div className='controlGroup'>
+                            <StatusStyleToggle />
+                            <FolderGroupingToggle />
+                        </div>
+                        <div className='taskSearch' onMouseDown={this.focusSearchInput} onClick={() => this.searchInput.current?.focus()}>
+                            <span className='icon'>{Icons.searchIcon}</span>
+                            <input
+                                ref={this.searchInput}
+                                aria-label='Search visible tasks'
+                                placeholder='Search tasks'
+                                type='search'
+                                value={searchQuery}
+                                onInput={handleSearchChange}
+                            />
+                        </div>
                     </div>
-                    <div className='taskSearch' onMouseDown={this.focusSearchInput} onClick={() => this.searchInput.current?.focus()}>
-                        <span className='icon'>{Icons.searchIcon}</span>
-                        <input
-                            ref={this.searchInput}
-                            aria-label='Search visible tasks'
-                            placeholder='Search tasks'
-                            type='search'
-                            value={searchQuery}
-                            onInput={handleSearchChange}
-                            onKeyUp={handleSearchChange}
-                        />
-                    </div>
+                    <BulkCollapseControls />
                 </div>
             )}
             </UserOptionContext.Consumer>
         )
+    }
+}
+
+class BulkCollapseControls extends React.Component {
+    render(): React.ReactNode {
+        return (
+            <UserOptionContext.Consumer>{({ handleBulkCollapse }) => (
+                <div className='bulkCollapseControls' aria-label='Timeline section controls'>
+                    <button type='button' className='bulkCollapseAction' onClick={() => handleBulkCollapse(false)}
+                        aria-label='Expand all dates and folders' title='Expand all dates and folders'>
+                        <span>Expand all</span>
+                    </button>
+                    <button type='button' className='bulkCollapseAction' onClick={() => handleBulkCollapse(true)}
+                        aria-label='Collapse all dates and folders' title='Collapse all dates and folders'>
+                        <span>Collapse all</span>
+                    </button>
+                </div>
+            )}
+            </UserOptionContext.Consumer>
+        );
     }
 }
 
@@ -444,9 +561,9 @@ class TodayFocus extends React.Component<TodayFocusProps> {
     render(): React.ReactNode {
         return (
             <TodayFocusEventHandlersContext.Consumer>{callback => (
-                <div className='todayHeader' aria-label='Focus today' onClick={callback.handleTodayFocusClick}>
+                <button type='button' className='todayHeader' aria-label='Focus today' onClick={callback.handleTodayFocusClick}>
                     {this.props.visual}
-                </div>)}
+                </button>)}
             </TodayFocusEventHandlersContext.Consumer>
         );
     }
@@ -484,10 +601,10 @@ export type CounterProps = Readonly<typeof defaultCounterProps>;
 
 class CounterItem extends React.Component<CounterProps> {
     render(): React.ReactNode {
-        return (<div className='counter' id={this.props.id} aria-label={this.props.ariaLabel} onClick={this.props.onClick}>
+        return (<button type='button' className='counter' id={this.props.id} aria-label={this.props.ariaLabel} onClick={this.props.onClick}>
             <div className='count'>{this.props.id === "controls" ? Icons.controlsIcon : this.props.cnt}</div>
             <div className='label'>{this.props.label}</div>
-        </div>
+        </button>
         );
     }
 }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import moment from "moment";
 import { Link } from "../dataview-util/markdown";
 import {
+	filterTasksByCounter,
 	filterTasksBySearch,
 	taskMatchesSearch,
 	taskMatchesSourceSearch,
@@ -63,6 +65,27 @@ describe("timeline counter mode classes", () => {
 		expect(counterModeClass("todoFilter", "Focus")).toBe("todoFocus");
 		expect(counterModeClass("overdueFilter", "Focus")).toBe("overdueFocus");
 		expect(counterModeClass("unplannedFilter", "Focus")).toBe("unplannedFocus");
+	});
+});
+
+describe("timeline counter filtering", () => {
+	const due = makeTask("Due task", { status: "due", due: moment("2026-06-20") });
+	const overdue = makeTask("Overdue task", { status: "overdue", due: moment("2026-06-18") });
+	const unplanned = makeTask("Unplanned task", { status: "unplanned" });
+	const tasks = [due, overdue, unplanned];
+
+	it("removes nonmatching tasks before folder groups are rendered in show-only mode", () => {
+		expect(filterTasksByCounter(tasks, "todoFilter", "Filter")).toEqual([due]);
+		expect(filterTasksByCounter(tasks, "overdueFilter", "Filter")).toEqual([overdue]);
+		expect(filterTasksByCounter(tasks, "unplannedFilter", "Filter")).toEqual([unplanned]);
+	});
+
+	it("keeps every task in highlight mode", () => {
+		expect(filterTasksByCounter(tasks, "todoFilter", "Focus")).toEqual(tasks);
+	});
+
+	it("keeps every task when no counter is selected", () => {
+		expect(filterTasksByCounter(tasks, "", "Filter")).toEqual(tasks);
 	});
 });
 
